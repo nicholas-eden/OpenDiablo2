@@ -46,6 +46,10 @@ type Region struct {
 	lastFrameTime     float64
 }
 
+func (v *Region) TileAt(x, y int) d2dt1.Tile {
+	return v.Tiles[x + (y * int(v.TileWidth))]
+}
+
 func LoadRegion(seed int64, levelType d2enum.RegionIdType, levelPreset int, fileProvider d2interface.FileProvider, fileIndex int) *Region {
 	result := &Region{
 		LevelType:         d2datadict.LevelTypes[levelType],

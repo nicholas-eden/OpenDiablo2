@@ -1,8 +1,10 @@
 package d2mapengine
 
 import (
+	"container/heap"
 	"fmt"
 	"image/color"
+	"math"
 	"strings"
 
 	"github.com/OpenDiablo2/D2Shared/d2common/d2enum"
@@ -365,4 +367,149 @@ func (v *Engine) DrawTileLines(region *Region, x, y int, target *ebiten.Image) {
 			}
 		}
 	}
+}
+
+// node is a wrapper to store A* data for a Pather node.
+type node struct {
+	coords
+	cost   float64
+	rank   float64
+	parent *node
+	open   bool
+	closed bool
+	index  int
+}
+
+type coords struct {
+	x int
+	y int
+}
+
+// nodeMap is a collection of nodes keyed by Pather nodes for quick reference.
+type nodeMap map[coords]*node
+
+var perimeter = [9][2]int{
+	{-1, -1},
+	{-1, 0},
+	{-1, 1},
+	{0, -1},
+	{0, 0},
+	{0, 1},
+	{1, -1},
+	{1, 0},
+	{1, 1},
+}
+
+// Path calculates a short path and the distance between the two nodes.
+// If no path is found, found will be false.
+func (v *Engine) Path(fromX, fromY, toX, toY int32) (path []*node, found bool) {
+	region := v.GetRegionAt(int(fromX), int(fromY))
+	tiles := region.Region.Tiles
+
+
+	from := coords{x: fromX, y: fromY}
+	to := coords{x: toX, y: toY}
+	nm := make(nodeMap)
+	nq := &priorityQueue{}
+	heap.Init(nq)
+	nm[from] = &node{
+		coords: from,
+		open:   true,
+	}
+	heap.Push(nq, from)
+	for {
+		if nq.Len() == 0 {
+			// There's no path, return found false.
+			return nil, false
+		}
+		current := heap.Pop(nq).(*node)
+		current.open = false
+		current.closed = true
+
+		if current == nm[to] {
+			// Found a path to the goal.
+			path = make([]*node, 0, 8)
+			curr := current
+			for curr != nil {
+				path = append(path, curr)
+				curr = curr.parent
+			}
+			return path, true
+		}
+
+		for _, direction := range perimeter {
+			loc := coords{
+				x: current.x + direction[0],
+				y: current.y + direction[1],
+			}
+
+			tx := (loc.x - region.Rect.Left) / 5
+			ty := (loc.y - region.Rect.Top) / 5
+
+			tile := region.Region.TileAt(tx, ty)
+
+			neighborNode, ok := nm[loc]
+			if !ok {
+				neighborNode = &node{
+					coords: from,
+					open:   true,
+					cost:   math.MaxFloat64,
+				}
+				nm[loc] = neighborNode
+			}
+
+			cost := current.cost + 1
+			if tile.SubTileSummary.BlockPlayerWalk {
+				cost = math.MaxInt32
+			}
+
+			if cost < neighborNode.cost {
+				if neighborNode.open {
+					heap.Remove(nq, neighborNode.index)
+				}
+				neighborNode.open = false
+				neighborNode.closed = false
+			}
+
+			if !neighborNode.open && !neighborNode.closed {
+				distance := math.Sqrt(math.Pow(float64(to.x-loc.x), 2) - math.Pow(float64(to.y-loc.y), 2))
+				neighborNode.cost = cost
+				neighborNode.open = true
+				neighborNode.rank = cost + distance
+				neighborNode.parent = current
+				heap.Push(nq, neighborNode)
+			}
+		}
+	}
+}
+
+type priorityQueue []*node
+
+func (pq priorityQueue) Len() int { return len(pq) }
+
+func (pq priorityQueue) Less(i, j int) bool {
+	return pq[i].cost < pq[j].cost
+}
+
+func (pq priorityQueue) Swap(i, j int) {
+	pq[i], pq[j] = pq[j], pq[i]
+	pq[i].index = i
+	pq[j].index = j
+}
+
+func (pq *priorityQueue) Push(x interface{}) {
+	n := len(*pq)
+	item := x.(*node)
+	item.index = n
+	*pq = append(*pq, item)
+}
+
+func (pq *priorityQueue) Pop() interface{} {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil  // avoid memory leak
+	item.index = -1 // for safety
+	*pq = old[0 : n-1]
+	return item
 }
